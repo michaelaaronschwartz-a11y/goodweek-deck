@@ -1524,10 +1524,10 @@
   <!-- Live Notes Section -->
   <div style="margin-bottom:48px;padding-bottom:32px;border-bottom:1px solid var(--gray8);">
     <h3 style="font-family:var(--font-mono);font-weight:700;font-size:14px;color:var(--primary);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Live Meeting Notes</h3>
-    <div style="font-family:var(--font-mono);font-size:11px;color:var(--gray6);line-height:1.5;margin-bottom:20px;">Records the conversation via Deepgram with speaker detection. Press <strong style="color:var(--gray4);">spacebar</strong> to toggle the mic. When you stop recording, Claude auto-summarizes the transcript into the Next Steps slide.</div>
+    <div style="font-family:var(--font-mono);font-size:11px;color:var(--gray6);line-height:1.5;margin-bottom:20px;">Records the conversation using Chrome's built-in speech recognition. Press <strong style="color:var(--gray4);">spacebar</strong> to toggle the mic. When you stop recording, Claude auto-summarizes the transcript into the Next Steps slide.</div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;max-width:600px;">
-      <div>
+    <div style="display:grid;grid-template-columns:1fr;gap:20px;margin-bottom:24px;max-width:600px;">
+      <div style="display:none;">
         <label style="display:block;font-family:var(--font-primary);font-weight:600;font-size:12px;color:var(--gray5);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Deepgram API Key</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input id="cfg-deepgram-key" type="password" style="flex:1;padding:10px 12px;font-family:var(--font-primary);font-size:14px;background:var(--gray9);border:1px solid var(--gray8);border-radius:6px;color:var(--gray1);box-sizing:border-box;" placeholder="your deepgram key">
@@ -3574,132 +3574,65 @@
       }
     }
 
-    // ── Deepgram WebSocket streaming with speaker diarization ──
-    var dgSocket = null;
+    // ── Speech Recognition (Web Speech API with Deepgram fallback) ──
+    var recognition = null;
     var mediaStream = null;
-    var mediaRecorder = null;
-    var lastSpeaker = -1;
 
     async function startRecording() {
-      var dgKey = document.getElementById('cfg-deepgram-key').value.trim();
-      if (!dgKey) {
-        showNotesStatus('Please enter your Deepgram API key');
+      // Use Web Speech API (built into Chrome, no API key needed)
+      if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        showNotesStatus('Speech recognition not supported in this browser. Use Chrome.');
         return;
       }
+
+      var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = function() {
+        showNotesStatus('Listening…');
+      };
+
+      recognition.onresult = function(event) {
+        var latest = '';
+        for (var i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            latest += event.results[i][0].transcript + ' ';
+          }
+        }
+        if (latest.trim()) {
+          transcriptEl.value += latest;
+          transcriptEl.scrollTop = transcriptEl.scrollHeight;
+        }
+      };
+
+      recognition.onerror = function(event) {
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'not-allowed') {
+          showNotesStatus('Microphone access denied.');
+        } else if (event.error === 'no-speech') {
+          // Silently restart — this is normal
+        } else {
+          showNotesStatus('Mic error: ' + event.error);
+        }
+      };
+
+      recognition.onend = function() {
+        // Auto-restart if still recording (Web Speech API stops after silence)
+        if (isRecording) {
+          try { recognition.start(); } catch(e) {}
+        }
+      };
 
       try {
-        // Get mic access
-        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch(err) {
-        showNotesStatus('Microphone access denied');
+        recognition.start();
+      } catch(e) {
+        showNotesStatus('Could not start speech recognition: ' + e.message);
         return;
       }
-
-      // First validate the API key with a REST call, then open WebSocket
-      showNotesStatus('Connecting to Deepgram…');
-      var dgParams = 'model=nova-2'
-        + '&language=en'
-        + '&smart_format=true'
-        + '&diarize=true'
-        + '&punctuate=true'
-        + '&interim_results=false'
-        + '&utterance_end_ms=1500'
-        + '&encoding=linear16'
-        + '&sample_rate=16000'
-        + '&channels=1';
-
-      // Use protocol auth (same as working test button)
-      dgSocket = new WebSocket('wss://api.deepgram.com/v1/listen?' + dgParams, ['token', dgKey]);
-
-      dgSocket.onopen = function() {
-        showNotesStatus('Connected to Deepgram');
-
-        // Use AudioContext to get raw PCM at 16kHz
-        var audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-        var source = audioCtx.createMediaStreamSource(mediaStream);
-        var processor = audioCtx.createScriptProcessor(4096, 1, 1);
-
-        processor.onaudioprocess = function(e) {
-          if (!dgSocket || dgSocket.readyState !== WebSocket.OPEN) return;
-          var float32 = e.inputBuffer.getChannelData(0);
-          // Convert float32 to int16
-          var int16 = new Int16Array(float32.length);
-          for (var i = 0; i < float32.length; i++) {
-            var s = Math.max(-1, Math.min(1, float32[i]));
-            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-          }
-          dgSocket.send(int16.buffer);
-        };
-
-        source.connect(processor);
-        processor.connect(audioCtx.destination);
-
-        // Store refs for cleanup
-        dgSocket._audioCtx = audioCtx;
-        dgSocket._processor = processor;
-        dgSocket._source = source;
-      };
-
-      dgSocket.onmessage = function(event) {
-        try {
-          var data = JSON.parse(event.data);
-          if (!data.channel || !data.channel.alternatives || !data.channel.alternatives[0]) return;
-          var alt = data.channel.alternatives[0];
-          var transcript = alt.transcript;
-          if (!transcript || !transcript.trim()) return;
-
-          // Extract speaker from words array
-          var words = alt.words || [];
-          // Group consecutive words by speaker
-          var segments = [];
-          var currentSeg = null;
-          for (var wi = 0; wi < words.length; wi++) {
-            var w = words[wi];
-            var spk = (w.speaker !== undefined && w.speaker !== null) ? w.speaker : -1;
-            if (!currentSeg || currentSeg.speaker !== spk) {
-              currentSeg = { speaker: spk, text: w.punctuated_word || w.word };
-              segments.push(currentSeg);
-            } else {
-              currentSeg.text += ' ' + (w.punctuated_word || w.word);
-            }
-          }
-
-          // Append to transcript with speaker labels
-          var output = '';
-          for (var si = 0; si < segments.length; si++) {
-            var seg = segments[si];
-            var label = seg.speaker >= 0 ? 'Speaker ' + (seg.speaker + 1) : 'Speaker';
-            // Only add speaker label if speaker changed from last line
-            if (seg.speaker !== lastSpeaker) {
-              output += '\n' + label + ': ';
-              lastSpeaker = seg.speaker;
-            }
-            output += seg.text + ' ';
-          }
-
-          transcriptEl.value += output;
-          transcriptEl.scrollTop = transcriptEl.scrollHeight;
-        } catch(e) {
-          console.error('Deepgram parse error:', e);
-        }
-      };
-
-      dgSocket.onerror = function(e) {
-        console.error('Deepgram WS error:', e);
-        console.error('WS readyState at error:', dgSocket.readyState);
-        console.error('WS url:', dgSocket.url);
-        console.error('WS protocol:', dgSocket.protocol);
-      };
-
-      dgSocket.onclose = function(e) {
-        console.log('Deepgram WS closed — code:', e.code, 'reason:', e.reason, 'wasClean:', e.wasClean);
-        console.log('WS readyState at close:', dgSocket.readyState);
-        if (isRecording) {
-          var msg = 'Deepgram disconnected (code ' + e.code + ')';
-          if (e.reason) msg += ': ' + e.reason;
-          showNotesStatus(msg);
-        }
-      };
 
       isRecording = true;
       micBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg> Recording…';
@@ -3709,26 +3642,14 @@
 
     function stopRecording() {
       isRecording = false;
-      // Close Deepgram socket gracefully
-      if (dgSocket) {
-        if (dgSocket._processor) { dgSocket._processor.disconnect(); }
-        if (dgSocket._source) { dgSocket._source.disconnect(); }
-        if (dgSocket._audioCtx && dgSocket._audioCtx.state !== 'closed') {
-          dgSocket._audioCtx.close().catch(function(){});
-        }
-        if (dgSocket.readyState === WebSocket.OPEN) {
-          // Send close frame to flush final results
-          dgSocket.send(JSON.stringify({ type: 'CloseStream' }));
-        }
-        try { dgSocket.close(); } catch(e) {}
-        dgSocket = null;
+      if (recognition) {
+        try { recognition.stop(); } catch(e) {}
+        recognition = null;
       }
-      // Stop mic
       if (mediaStream) {
         mediaStream.getTracks().forEach(function(t) { t.stop(); });
         mediaStream = null;
       }
-      lastSpeaker = -1;
       micBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg> Start Recording';
       micBtn.style.color = 'var(--gray3)';
       micBtn.style.borderColor = 'var(--gray7)';
