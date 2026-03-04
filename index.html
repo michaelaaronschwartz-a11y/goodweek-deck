@@ -3608,8 +3608,8 @@
         + '&sample_rate=16000'
         + '&channels=1';
 
-      // Use token query param for browser compatibility
-      dgSocket = new WebSocket('wss://api.deepgram.com/v1/listen?token=' + encodeURIComponent(dgKey) + '&' + dgParams);
+      // Use protocol auth (same as working test button)
+      dgSocket = new WebSocket('wss://api.deepgram.com/v1/listen?' + dgParams, ['token', dgKey]);
 
       dgSocket.onopen = function() {
         showNotesStatus('Connected to Deepgram');
@@ -3686,10 +3686,14 @@
 
       dgSocket.onerror = function(e) {
         console.error('Deepgram WS error:', e);
+        console.error('WS readyState at error:', dgSocket.readyState);
+        console.error('WS url:', dgSocket.url);
+        console.error('WS protocol:', dgSocket.protocol);
       };
 
       dgSocket.onclose = function(e) {
         console.log('Deepgram WS closed — code:', e.code, 'reason:', e.reason, 'wasClean:', e.wasClean);
+        console.log('WS readyState at close:', dgSocket.readyState);
         if (isRecording) {
           var msg = 'Deepgram disconnected (code ' + e.code + ')';
           if (e.reason) msg += ': ' + e.reason;
