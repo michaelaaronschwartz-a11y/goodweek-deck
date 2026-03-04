@@ -3512,29 +3512,39 @@
 
     window.testDeepgramKey = async function() {
       var key = document.getElementById('cfg-deepgram-key').value.trim();
-      if (!key) { setKeyStatus('deepgram-status', 'err', 'Please enter an API key first.'); return; }
-      setKeyStatus('deepgram-status', 'pending', 'Testing connection…');
+      if (!key) { window.setKeyStatus('deepgram-status', 'err', 'Please enter an API key first.'); return; }
+      window.setKeyStatus('deepgram-status', 'pending', 'Testing connection…');
       try {
-        var resp = await fetch('https://api.deepgram.com/v1/projects', {
-          method: 'GET',
-          headers: { 'Authorization': 'Token ' + key }
-        });
-        if (resp.ok) {
-          setKeyStatus('deepgram-status', 'ok', 'Connected! Key is valid.');
-        } else if (resp.status === 401 || resp.status === 403) {
-          setKeyStatus('deepgram-status', 'err', 'Invalid key. Check and try again.');
-        } else {
-          setKeyStatus('deepgram-status', 'err', 'Error ' + resp.status + '. Try again.');
-        }
+        var testWs = new WebSocket('wss://api.deepgram.com/v1/listen?model=nova-2&language=en', ['token', key]);
+        var timer = setTimeout(function() {
+          testWs.close();
+          window.setKeyStatus('deepgram-status', 'err', 'Connection timed out. Check your key.');
+        }, 6000);
+        testWs.onopen = function() {
+          clearTimeout(timer);
+          window.setKeyStatus('deepgram-status', 'ok', 'Connected! Key is valid.');
+          testWs.close();
+        };
+        testWs.onerror = function() {
+          clearTimeout(timer);
+        };
+        testWs.onclose = function(e) {
+          clearTimeout(timer);
+          if (e.code === 1008 || e.code === 4001 || e.code === 4003) {
+            window.setKeyStatus('deepgram-status', 'err', 'Invalid key. Check and try again.');
+          } else if (e.code !== 1000 && e.code !== 1005 && document.getElementById('deepgram-status').innerHTML.indexOf('Connected') === -1) {
+            window.setKeyStatus('deepgram-status', 'err', 'Connection failed (code ' + e.code + '). Check your key.');
+          }
+        };
       } catch (e) {
-        setKeyStatus('deepgram-status', 'err', 'Network error. Are you online?');
+        window.setKeyStatus('deepgram-status', 'err', 'Connection error: ' + e.message);
       }
     }
 
     window.testAnthropicKey = async function() {
       var key = document.getElementById('cfg-anthropic-key').value.trim();
-      if (!key) { setKeyStatus('anthropic-status', 'err', 'Please enter an API key first.'); return; }
-      setKeyStatus('anthropic-status', 'pending', 'Testing connection…');
+      if (!key) { window.setKeyStatus('anthropic-status', 'err', 'Please enter an API key first.'); return; }
+      window.setKeyStatus('anthropic-status', 'pending', 'Testing connection…');
       try {
         var resp = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
@@ -3545,23 +3555,22 @@
             'anthropic-dangerous-direct-browser-access': 'true'
           },
           body: JSON.stringify({
-            model: 'claude-sonnet-4-5-20250514',
+            model: 'claude-3-5-haiku-20241022',
             max_tokens: 10,
             messages: [{ role: 'user', content: 'Say OK' }]
           })
         });
         if (resp.ok) {
-          setKeyStatus('anthropic-status', 'ok', 'Connected! Key is valid.');
+          window.setKeyStatus('anthropic-status', 'ok', 'Connected! Key is valid.');
         } else if (resp.status === 401) {
-          setKeyStatus('anthropic-status', 'err', 'Invalid key. Check and try again.');
-        } else if (resp.status === 400) {
-          var body = await resp.json().catch(function() { return {}; });
-          setKeyStatus('anthropic-status', 'err', (body.error && body.error.message) || 'Bad request. Check key format.');
+          window.setKeyStatus('anthropic-status', 'err', 'Invalid key. Check and try again.');
         } else {
-          setKeyStatus('anthropic-status', 'err', 'Error ' + resp.status + '. Try again.');
+          var body = await resp.json().catch(function() { return {}; });
+          var errMsg = (body.error && body.error.message) || ('Error ' + resp.status);
+          window.setKeyStatus('anthropic-status', 'err', errMsg);
         }
       } catch (e) {
-        setKeyStatus('anthropic-status', 'err', 'Network error. Are you online?');
+        window.setKeyStatus('anthropic-status', 'err', 'Network error: ' + e.message);
       }
     }
 
