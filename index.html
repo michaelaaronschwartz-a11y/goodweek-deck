@@ -3497,8 +3497,8 @@
       setTimeout(function() { statusEl.style.opacity = '0'; }, 3000);
     }
 
-    // ── API Key Validation ──
-    function setKeyStatus(elId, state, msg) {
+    // ── API Key Validation (exposed globally for onclick) ──
+    window.setKeyStatus = function(elId, state, msg) {
       var el = document.getElementById(elId);
       if (!el) return;
       if (state === 'ok') {
@@ -3510,7 +3510,7 @@
       }
     }
 
-    async function testDeepgramKey() {
+    window.testDeepgramKey = async function() {
       var key = document.getElementById('cfg-deepgram-key').value.trim();
       if (!key) { setKeyStatus('deepgram-status', 'err', 'Please enter an API key first.'); return; }
       setKeyStatus('deepgram-status', 'pending', 'Testing connection…');
@@ -3531,7 +3531,7 @@
       }
     }
 
-    async function testAnthropicKey() {
+    window.testAnthropicKey = async function() {
       var key = document.getElementById('cfg-anthropic-key').value.trim();
       if (!key) { setKeyStatus('anthropic-status', 'err', 'Please enter an API key first.'); return; }
       setKeyStatus('anthropic-status', 'pending', 'Testing connection…');
