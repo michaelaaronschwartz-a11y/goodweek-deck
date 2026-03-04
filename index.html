@@ -3608,13 +3608,8 @@
         + '&sample_rate=16000'
         + '&channels=1';
 
-      // Try multiple auth methods
-      try {
-        dgSocket = new WebSocket('wss://api.deepgram.com/v1/listen?' + dgParams, ['token', dgKey]);
-      } catch(wsErr) {
-        console.error('WS constructor failed, trying token param:', wsErr);
-        dgSocket = new WebSocket('wss://api.deepgram.com/v1/listen?token=' + encodeURIComponent(dgKey) + '&' + dgParams);
-      }
+      // Use token query param for browser compatibility
+      dgSocket = new WebSocket('wss://api.deepgram.com/v1/listen?token=' + encodeURIComponent(dgKey) + '&' + dgParams);
 
       dgSocket.onopen = function() {
         showNotesStatus('Connected to Deepgram');
